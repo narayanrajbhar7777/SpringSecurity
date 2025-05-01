@@ -1,0 +1,8 @@
+/home/pc/Desktop/Projects/Product/src/main/java/com/product/ProductApplication.java
+/home/pc/Desktop/Projects/Product/src/main/java/com/product/controller/ProductController.java
+/home/pc/Desktop/Projects/Product/src/main/java/com/product/entities/Product.java
+/home/pc/Desktop/Projects/Product/src/main/java/com/product/exceptions/ProductException.java
+/home/pc/Desktop/Projects/Product/src/main/java/com/product/handler/ProductExceptionHandler.java
+/home/pc/Desktop/Projects/Product/src/main/java/com/product/repository/ProductRepository.java
+/home/pc/Desktop/Projects/Product/src/main/java/com/product/service/ProductService.java
+/home/pc/Desktop/Projects/Product/src/main/java/com/product/service/serviceImpl/ProductServiceImpl.java
