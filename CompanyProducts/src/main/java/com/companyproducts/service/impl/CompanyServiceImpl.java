@@ -1,12 +1,16 @@
 package com.companyproducts.service.impl;
 
+import com.companyproducts.constant.APIConstant;
 import com.companyproducts.entities.Company;
 import com.companyproducts.entities.Product;
+import com.companyproducts.enums.CLIENTS;
 import com.companyproducts.exceptions.CompanyException;
+import com.companyproducts.factory.ClientFactory;
 import com.companyproducts.repository.CompanyRepository;
 import com.companyproducts.service.CompanyService;
 import com.companyproducts.service.ProductClient;
-import org.springframework.beans.factory.annotation.Autowired;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
@@ -15,25 +19,18 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.reactive.function.client.WebClient;
 
-import javax.sound.sampled.Port;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
+
 
 @Service
 public class CompanyServiceImpl implements CompanyService {
-
+    private final BCryptPasswordEncoder encoder = new BCryptPasswordEncoder(10);
     private final CompanyRepository companyRepository;
-
-    private final RestTemplate restTemplate;  //1-> Way
-    private final WebClient.Builder webClientBuilder; //2-> Way
-    private final ProductClient productClient;
-    private BCryptPasswordEncoder encoder = new BCryptPasswordEncoder(10);
-    public CompanyServiceImpl(CompanyRepository companyRepository, RestTemplate restTemplate, WebClient.Builder webClientBuilder, ProductClient productClient) {
+    private final ClientFactory clientFactory;
+    public CompanyServiceImpl(CompanyRepository companyRepository, ClientFactory clientFactory) {
         this.companyRepository = companyRepository;
-        this.restTemplate = restTemplate;
-        this.webClientBuilder = webClientBuilder;
-        this.productClient = productClient;
+        this.clientFactory = clientFactory;
     }
 
     @Override
@@ -44,57 +41,64 @@ public class CompanyServiceImpl implements CompanyService {
 
     @Override
     public Company get(int companyId) {
-//            Product product = getProductByRestTemplate("http://localhost:8083/product/companyId/" + companyId);
-//            Product product = getProductByWebClient("http://localhost:8083/product/companyId/" + companyId);
-//            List<Product> productList = getProductListByRestTemplate("http://localhost:8083/product/companyId/" + companyId);
         List<Product> productList = getProductListByOpenFeignClient(companyId);
         Company company = companyRepository.findById(companyId).orElseThrow(() -> new CompanyException("Company not found."));
-        company.setProduct(productList);
+        company.setProductList(productList);
         return company;
     }
 
     private List<Product> getProductListByOpenFeignClient(int companyId) {
-        return productClient.getProdcutByCompanyId(companyId);
+        return ((ProductClient) clientFactory.getClient(CLIENTS.FEIGN_CLIENT)).getProdcutByCompanyId(companyId);
     }
+
 
     @Override
     public List<Company> getAll() {
-        return companyRepository.findAll().stream().map(conpany ->
-                {
-                    ResponseEntity<List<Product>> response = restTemplate.exchange("http://localhost:8083/product/companyId/" + conpany.getCompanyId(), HttpMethod.GET, null, new ParameterizedTypeReference<List<Product>>() {});
-                    List<Product> getProductList = response.getBody();
-                    if (Objects.isNull(getProductList))
-                        getProductList = new ArrayList<>();
-                    conpany.setProduct(getProductList);
-                    return conpany;
-                }
-        ).toList();
+        return companyRepository.findAll().stream()
+                .map(company -> {
+                    List<Product> products = getProductsWithCircuitBreaker(Long.valueOf(company.getCompanyId()));
+                    company.setProductList(products);
+                    return company;
+                }).toList();
     }
 
+    @CircuitBreaker(name = "productService", fallbackMethod = "fallbackProductList")
+    public List<Product> getProductsWithCircuitBreaker(Long companyId) {
+        String url = APIConstant.PRODUCT_SERVICE_BASE_URL + companyId;
+        RestTemplate restTemplate = (RestTemplate) clientFactory.getClient(CLIENTS.REST_TEMPLATE);
+
+        ResponseEntity<List<Product>> response = restTemplate.exchange(
+                url,
+                HttpMethod.GET,
+                null,
+                new ParameterizedTypeReference<List<Product>>() {}
+        );
+        return response.getBody() != null ? response.getBody() : new ArrayList<>();
+    }
+
+    public List<Product> fallbackProductList(Long companyId, Throwable ex) {
+        System.err.println("Fallback triggered for companyId " + companyId + ": " + ex.getMessage());
+        return new ArrayList<>();
+    }
+
+
+
     private List<Product> getProductListByRestTemplate(String sURL) {
-        ResponseEntity<List<Product>> response = restTemplate.exchange(sURL, HttpMethod.GET, null, new ParameterizedTypeReference<List<Product>>() {
-        });
-        List<Product> getProductList = response.getBody();
-        if (Objects.isNull(getProductList)) {
-            getProductList = new ArrayList<>();
-        }
-        return getProductList;
+        RestTemplate restTemplate = (RestTemplate) clientFactory.getClient(CLIENTS.REST_TEMPLATE);
+
+        return restTemplate.
+                exchange(sURL, HttpMethod.GET, null, new ParameterizedTypeReference<List<Product>>() {
+                }).getBody();
     }
 
     private Product getProductByRestTemplate(String sURL) {
-        Product product;
-        product = restTemplate.getForObject(sURL, Product.class);
-        if (Objects.isNull(product)) {
-            product = new Product();
-        }
-        return product;
+        RestTemplate restTemplate = (RestTemplate) clientFactory.getClient(CLIENTS.REST_TEMPLATE);
+
+        return restTemplate.getForObject(sURL, Product.class);
     }
+
     private Product getProductByWebClient(String sURL) {
-        Product product;
-        product = webClientBuilder.build().get().uri(sURL).retrieve().bodyToMono(Product.class).block();/*2-> Way*/
-        if (Objects.isNull(product)) {
-            product = new Product();
-        }
-        return product;
+        WebClient web = (WebClient) clientFactory.getClient(CLIENTS.WEB_CLIENT);
+        return web.get().uri(sURL).retrieve().bodyToMono(Product.class).block();/*2-> Way*/
     }
 }
