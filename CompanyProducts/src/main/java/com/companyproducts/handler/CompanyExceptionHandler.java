@@ -10,7 +10,6 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 public class CompanyExceptionHandler {
 
     @ExceptionHandler
-    @ResponseStatus
     public String handlerCompanyException(CompanyException e) {
         return e.getMessage();
     }
